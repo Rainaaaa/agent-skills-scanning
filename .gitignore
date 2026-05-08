@@ -36,6 +36,10 @@ Untitled-*.ipynb
 !.env.example
 api_keys.conf
 
+# Per-host pipeline config (created from config.example.yaml).
+# Hardcoded paths or env-var overrides live here, machine-specific.
+config.yaml
+
 # SLURM cluster outputs
 *.log
 *.err

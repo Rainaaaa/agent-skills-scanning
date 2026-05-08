@@ -34,6 +34,10 @@
 !**/.env.example
 **/api_keys.conf
 
+# Per-host config (the example template ships in the image; the actual
+# config.yaml is generated at runtime or bind-mounted in).
+config.yaml
+
 # Docs not needed inside the image
 *.md
 !README.md

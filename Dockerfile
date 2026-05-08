@@ -43,11 +43,17 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt
 
-# Pipeline source.
+# Pipeline source. We ship config.example.yaml only; the user creates
+# config.yaml from it (or bind-mounts one in via docker-compose).
 COPY pipeline /app/pipeline
 COPY scanners /app/scanners
-COPY config.yaml /app/config.yaml
+COPY config.example.yaml /app/config.example.yaml
 COPY README.md /app/README.md
+
+# Default config inside the image is the template; users override by
+# mounting their own at /app/config.yaml or by setting the env vars
+# documented in config.example.yaml.
+RUN cp /app/config.example.yaml /app/config.yaml
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

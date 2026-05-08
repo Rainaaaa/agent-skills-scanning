@@ -16,6 +16,7 @@ any scanner subpackage without import cycles.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -27,6 +28,27 @@ try:
     import yaml  # type: ignore
 except ImportError:  # pragma: no cover
     yaml = None  # config loader will raise a nice error if PyYAML isn't installed
+
+
+# Substitution syntax inside YAML string values: ${NAME} or ${NAME:-default}.
+# Used by Config.load to thread env vars through the config without forcing
+# users to edit YAML for every new install.
+_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+def _interpolate_env(value: Any) -> Any:
+    """Recursively expand ${VAR} / ${VAR:-default} in any string value
+    nested inside a dict/list. Non-string leaves are passed through."""
+    if isinstance(value, str):
+        def repl(m: "re.Match[str]") -> str:
+            name, default = m.group(1), m.group(2)
+            return os.environ.get(name, default if default is not None else "")
+        return _ENV_VAR_RE.sub(repl, value)
+    if isinstance(value, dict):
+        return {k: _interpolate_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_interpolate_env(v) for v in value]
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -99,11 +121,15 @@ class Config:
 
     @classmethod
     def load(cls, path: Path) -> "Config":
+        """Load YAML and expand any ${VAR} / ${VAR:-default} placeholders
+        in string values from the process environment. Lets users keep
+        machine-specific paths out of the file (and out of git).
+        """
         if yaml is None:
             raise RuntimeError("PyYAML is required: pip install pyyaml")
         with path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-        return cls(data, source=path)
+        return cls(_interpolate_env(data), source=path)
 
     def get(self, dotted: str, default: Any = None) -> Any:
         node: Any = self._data

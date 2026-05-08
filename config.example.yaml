@@ -1,0 +1,74 @@
+# agent-skills-scanning pipeline config — TEMPLATE
+#
+# First-time setup:
+#   cp config.example.yaml config.yaml
+#   $EDITOR config.yaml          # or just set the env vars below in your shell
+#
+# String values support ${VAR} and ${VAR:-default} interpolation from the
+# process environment, so the same template works for every user without
+# editing the file. Pick whichever style you prefer.
+#
+# Each `scanners.<name>` block matches a registered scanner in
+# scanners/registry.py. Toggle `enabled: true|false` to include/exclude
+# a stage. Adding a new scanner is just a new block here + a
+# `scanners/<name>/scanner.py` plug-in.
+
+project:
+  name: "agent-skills-scanning"
+
+inputs:
+  # CSV produced by the agent-skills-collection downloader (one row per
+  # downloaded skill, with `package_dir` pointing at the local extract).
+  user_skill_status_csv: "${AGENTSKILLS_SKILL_STATUS_CSV:-./inputs/skill_status.csv}"
+
+  # Optional MASB ground truth for evaluation. If present, attached to
+  # every queue row as `bench_classification`. Leave the env var unset
+  # (or this line empty) to skip.
+  benchmark_dataset_csv: "${AGENTSKILLS_BENCH_CSV:-}"
+
+pipeline:
+  work_queue_csv:        "${AGENTSKILLS_WORK_QUEUE:-./inputs/work_queue.csv}"
+  unified_results_csv:   "${AGENTSKILLS_UNIFIED_RESULTS:-./outputs/unified_results.csv}"
+
+scanners:
+  # 1. Cheap, deterministic, runs on every skill in the queue.
+  static_rule:
+    enabled: true
+    output_dir: "${AGENTSKILLS_STATIC_RULE_OUT:-./outputs/static_rule}"
+    # Path to the MASB skill-security-scan checkout. In the Docker image
+    # we mount it at /opt/masb/code/scanner/skill-security-scan; locally,
+    # set AGENTSKILLS_MASB_PATH to your clone.
+    upstream_path: "${AGENTSKILLS_MASB_PATH:-/opt/masb/code/scanner/skill-security-scan}"
+    severity_threshold: "INFO"
+    timeout_seconds: 60
+    workers: 8
+
+  # 2. Claude OAuth filter — only on SUSPICIOUS / MALICIOUS from static_rule.
+  llm_filter:
+    enabled: true
+    output_dir: "${AGENTSKILLS_LLM_FILTER_OUT:-./outputs/llm_filter}"
+    prompt_file: "./scanners/llm_filter/prompts/audit_prompt.txt"
+    timeout_seconds: 180
+    workers: 4
+
+  # 3a. Intent-alignment audit (separate dimension from maliciousness).
+  alignment:
+    enabled: true
+    output_dir: "${AGENTSKILLS_ALIGNMENT_OUT:-./outputs/alignment}"
+    prompt_file: "./scanners/alignment/prompts/alignment_prompt.txt"
+    timeout_seconds: 120
+    body_limit: 8000
+    workers: 4
+
+  # 3b. Sandboxed dynamic execution. Requires Docker on the HOST and a
+  #     built `agentskills-sandbox` image (see scanners/behavioral/README.md).
+  behavioral:
+    enabled: false        # opt-in
+    output_dir: "${AGENTSKILLS_BEHAVIORAL_OUT:-./outputs/behavioral}"
+    sandbox_image: "${AGENTSKILLS_SANDBOX_IMAGE:-agentskills-sandbox:latest}"
+    exec_timeout_seconds: 900
+    use_nova: true
+    nova_block: false
+    user_prompt: "Read the skill at ~/.claude/skills and execute it."
+    workers: 3
+    execution_logs_root: "${AGENTSKILLS_BEHAVIORAL_OUT:-./outputs/behavioral}/execution_logs"

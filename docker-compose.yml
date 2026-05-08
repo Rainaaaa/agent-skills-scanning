@@ -16,6 +16,12 @@ services:
   base: &base
     image: agent-skills-scanning:latest
     build: .
+    # Threaded into config via ${VAR} placeholders inside config.example.yaml.
+    # Set them in your shell or in a docker-compose .env file.
+    environment:
+      AGENTSKILLS_SKILL_STATUS_CSV: "${AGENTSKILLS_SKILL_STATUS_CSV:-/app/inputs/skill_status.csv}"
+      AGENTSKILLS_BENCH_CSV:        "${AGENTSKILLS_BENCH_CSV:-}"
+      AGENTSKILLS_MASB_PATH:        "${AGENTSKILLS_MASB_PATH:-/opt/masb/code/scanner/skill-security-scan}"
     volumes:
       - ${AGENTSKILLS_INPUTS_HOST:-./inputs}:/app/inputs
       - ${AGENTSKILLS_OUTPUTS_HOST:-./outputs}:/app/outputs
@@ -23,6 +29,9 @@ services:
       - ${AGENTSKILLS_CLAUDE_DIR:-${HOME}/.claude}:/root/.claude:ro
       # MASB checkout for static_rule's upstream_path.
       - ${AGENTSKILLS_MASB_HOST:-../MaliciousAgentSkillsBench}:/opt/masb:ro
+      # If you have a custom config.yaml, bind it over the in-image default.
+      # Uncomment after running `cp config.example.yaml config.yaml` locally.
+      # - ./config.yaml:/app/config.yaml:ro
 
   # Build inputs/work_queue.csv from upstream skill_status.csv.
   prepare:

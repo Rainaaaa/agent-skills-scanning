@@ -90,10 +90,14 @@ agent-skills-scanning/
 └── outputs/                     # gitignored
 ```
 
-## Auth — once per host
+## First-time setup
+
+Three steps the first time you clone the repo:
+
+### 1. Authenticate Claude Code
 
 ```bash
-# Install Claude Code (skip inside Docker — the image already has it).
+# Install the CLI on the host (skip inside Docker — the image has it already).
 npm install -g @anthropic-ai/claude-code
 
 # Authenticate. Writes ~/.claude/.credentials.json.
@@ -106,6 +110,39 @@ claude -p "say hi"
 After this, every LLM-using scanner (`llm_filter`, `alignment`, and the
 `claude` invocation inside the `behavioral` sandbox) uses these
 credentials. No API keys touched.
+
+### 2. Make your local config
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+`config.yaml` is gitignored — your machine-specific paths stay local.
+Either edit the file or set the env vars it references:
+
+| Env var                          | What it points at                                            | Required? |
+| -------------------------------- | ------------------------------------------------------------ | --------- |
+| `AGENTSKILLS_SKILL_STATUS_CSV`   | Downloader output (one row per skill with `package_dir`)      | yes       |
+| `AGENTSKILLS_MASB_PATH`          | `MaliciousAgentSkillsBench/code/scanner/skill-security-scan` | yes       |
+| `AGENTSKILLS_BENCH_CSV`          | MASB ground truth CSV (for evaluation)                        | optional  |
+| `AGENTSKILLS_INPUTS_HOST`        | Host dir mounted at `/app/inputs` (compose only, default `./inputs`)  | optional  |
+| `AGENTSKILLS_OUTPUTS_HOST`       | Host dir mounted at `/app/outputs` (compose only, default `./outputs`) | optional  |
+| `AGENTSKILLS_MASB_HOST`          | Host MASB checkout mounted at `/opt/masb` (compose only)      | optional  |
+
+The `${VAR:-default}` pattern in `config.example.yaml` means unset vars
+fall back to relative paths like `./inputs/skill_status.csv` — useful
+when you bind-mount your data over `/app/inputs` in Docker.
+
+### 3. (Optional) Build the behavioral sandbox image
+
+Skip if you only want `static_rule + llm_filter + alignment`. To
+include `behavioral`, set `scanners.behavioral.enabled: true` in your
+`config.yaml` and:
+
+```bash
+cd scanners/behavioral/sandbox
+docker build --build-arg NOVA_MODE=lite -t agentskills-sandbox -f Dockerfile.sandbox .
+```
 
 ## Running
 
@@ -188,13 +225,16 @@ columns separate lets downstream analysis do its own joining.
 
 The pipeline expects a CSV from the upstream
 [agent-skills-collection](https://github.com/Rainaaaa/agent-skills-collection)
-download stage. Point at it in `config.yaml`:
+download stage. Point at it via env var…
 
-```yaml
-inputs:
-  user_skill_status_csv: /path/to/skill_status.csv
-  benchmark_dataset_csv: /path/to/MASB/data/skills_dataset.csv   # optional
+```bash
+export AGENTSKILLS_SKILL_STATUS_CSV=/path/to/skill_status.csv
+export AGENTSKILLS_BENCH_CSV=/path/to/MASB/data/skills_dataset.csv   # optional
+export AGENTSKILLS_MASB_PATH=/path/to/MaliciousAgentSkillsBench/code/scanner/skill-security-scan
 ```
+
+…or by editing your local `config.yaml` directly. Both styles work; the
+env vars are interpolated at config-load time.
 
 ## License + ethics
 
