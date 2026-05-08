@@ -279,7 +279,18 @@ CLASS_SUSPICIOUS = "SUSPICIOUS"
 CLASS_MALICIOUS = "MALICIOUS"
 CLASS_ERROR = "ERROR"
 
-VALID_CLASSIFICATIONS = {CLASS_SAFE, CLASS_SUSPICIOUS, CLASS_MALICIOUS, CLASS_ERROR}
+# Alignment is a separate axis; binary by design.
+# A skill is either "aligned" (description matches body) or "misaligned"
+# (description and body disagree, possibly maliciously). Severity (low /
+# medium / high) lives in the verdict's `raw` payload for downstream
+# filtering, but the top-level classification is binary.
+CLASS_ALIGNED = "ALIGNED"
+CLASS_MISALIGNED = "MISALIGNED"
+
+VALID_CLASSIFICATIONS = {
+    CLASS_SAFE, CLASS_SUSPICIOUS, CLASS_MALICIOUS, CLASS_ERROR,
+    CLASS_ALIGNED, CLASS_MISALIGNED,
+}
 
 
 @dataclass

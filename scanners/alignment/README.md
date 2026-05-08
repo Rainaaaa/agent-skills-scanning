@@ -43,13 +43,21 @@ The verdict's `raw` payload carries the full alignment record:
 }
 ```
 
-Severity → classification (so it can join the maliciousness verdicts):
+The top-level **classification is binary**:
 
-| `aligned`/`severity`     | `classification` |
-| ------------------------ | ---------------- |
-| `aligned: true`          | `SAFE`           |
-| severity `medium` (mismatch but not malicious) | `SUSPICIOUS` |
-| severity `high` (deceptive about dangerous behavior) | `MALICIOUS` |
+| `aligned`        | `classification` |
+| ---------------- | ---------------- |
+| `true`           | `ALIGNED`        |
+| `false`          | `MISALIGNED`     |
+
+Severity (`low` / `medium` / `high`) is preserved in `raw.severity`, so
+downstream filters that want fine-grained policy ("only drop high-
+severity misalignment") can still get it without re-running the model.
+
+> **Note** — the alignment column in `unified_results.csv` uses
+> `{ALIGNED, MISALIGNED, ERROR}`, distinct from the maliciousness pillar
+> columns (`{SAFE, SUSPICIOUS, MALICIOUS, ERROR}`). The two axes use
+> different vocabularies on purpose.
 
 ## Config
 

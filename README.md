@@ -42,6 +42,12 @@ same skill: one asks *"does the skill description match the body?"*,
 the other asks *"what does the skill actually do at runtime?"*. Both
 columns end up in the unified table.
 
+The maliciousness pillar (`static_rule` + `llm_filter` + `behavioral`)
+emits `{SAFE, SUSPICIOUS, MALICIOUS}`; the alignment axis emits a
+binary `{ALIGNED, MISALIGNED}`. Mixing severity into alignment hid the
+"the binary verdict is what trainers actually want" signal, so we
+report severity only inside the verdict's `raw` payload.
+
 ## Why pluggable
 
 A new scanner is two changes:
@@ -197,8 +203,8 @@ classification + reasons triplet per scanner:
 | `bench_classification` | MASB ground truth, if available (for evaluation)             |
 | `static_rule_class`    | `SAFE` / `SUSPICIOUS` / `MALICIOUS` / `ERROR`                |
 | `llm_filter_class`     | "                                                            |
-| `alignment_class`      | maps from `aligned`/`severity` (separate dimension!)         |
-| `behavioral_class`     | "                                                            |
+| `alignment_class`      | `ALIGNED` / `MISALIGNED` / `ERROR` (binary; separate axis)   |
+| `behavioral_class`     | `SAFE` / `SUSPICIOUS` / `MALICIOUS` / `ERROR`                |
 | `<scanner>_confidence` | 0–1 float                                                    |
 | `<scanner>_reasons`    | short strings (counts, patterns, summary text)               |
 | `overall_class`        | most-severe across `static_rule + llm_filter + behavioral`   |

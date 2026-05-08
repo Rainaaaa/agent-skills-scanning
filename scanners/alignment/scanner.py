@@ -5,10 +5,15 @@ and SKILL.md body are mutually consistent — and whether the body
 references files that don't exist in the package.
 
 This is a *separate dimension* from maliciousness. A skill can be:
-  - SAFE + aligned       → benign and honest
-  - SAFE + misaligned    → benign but the docs lie about what it does
-  - MALICIOUS + aligned  → openly malicious (rare; advertises bad behavior)
-  - MALICIOUS + misaligned → malicious AND deceptive (the dangerous case)
+  - aligned + safe           → benign and honest
+  - misaligned + safe        → benign but the docs lie about what it does
+  - aligned + malicious      → openly malicious (rare; advertises bad behavior)
+  - misaligned + malicious   → malicious AND deceptive (the dangerous case)
+
+The classification is **binary** — `ALIGNED` or `MISALIGNED`. Severity
+(low / medium / high) and the underlying `aligned` boolean live in the
+verdict's `raw` payload, so a downstream consumer that wants finer-
+grained alignment policy can still get it.
 
 The orchestrator runs this on the same scope as `behavioral`: skills that
 remain MALICIOUS or SUSPICIOUS after `llm_filter`. The two stages are
@@ -21,11 +26,10 @@ Output (in `raw`):
   - `mismatches`            : list[str]
   - `references_missing`    : list[str]
 
-We map alignment severity to our common classification ladder so the
-verdict can be aggregated alongside maliciousness verdicts:
+Mapping (top-level classification):
 
-  aligned=true                      → SAFE (alignment-axis SAFE)
-  severity == "medium" or "high"    → SUSPICIOUS / MALICIOUS respectively
+  aligned == true   → ALIGNED
+  aligned == false  → MISALIGNED
 """
 
 from __future__ import annotations
@@ -37,8 +41,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from pipeline._shared import (
+    CLASS_ALIGNED,
     CLASS_ERROR,
     CLASS_MALICIOUS,
+    CLASS_MISALIGNED,
     CLASS_SAFE,
     CLASS_SUSPICIOUS,
     ScannerVerdict,
@@ -81,6 +87,10 @@ def _load_skill_artifacts(skill_dir: Path):
 
 class AlignmentScanner(Scanner):
     name = "alignment"
+    # The orchestrator chains this off llm_filter; alignment is run on
+    # whatever made it past the maliciousness filter. The values
+    # SUSPICIOUS / MALICIOUS come from llm_filter (the maliciousness pillar),
+    # not from a previous alignment verdict.
     consumes_classifications = frozenset({CLASS_SUSPICIOUS, CLASS_MALICIOUS})
 
     def setup(self) -> None:
@@ -162,17 +172,19 @@ class AlignmentScanner(Scanner):
         mismatches = list(parsed.get("mismatches") or [])
         refs_missing = list(parsed.get("references_missing") or [])
 
+        # Binary alignment classification. Severity is preserved in `raw`
+        # for downstream consumers that want the finer gradient.
         if aligned:
-            classification = CLASS_SAFE
+            classification = CLASS_ALIGNED
             confidence = 0.5
         elif severity == "high":
-            classification = CLASS_MALICIOUS
+            classification = CLASS_MISALIGNED
             confidence = 0.85
         elif severity == "medium":
-            classification = CLASS_SUSPICIOUS
+            classification = CLASS_MISALIGNED
             confidence = 0.6
         else:
-            classification = CLASS_SUSPICIOUS
+            classification = CLASS_MISALIGNED
             confidence = 0.4
 
         reasons: List[str] = []
