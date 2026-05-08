@@ -1,0 +1,43 @@
+# Build context exclusions — keep the image lean.
+
+# Crawled / scanned artifacts and logs
+**/inputs
+**/outputs
+**/log
+**/logs
+**/execution_logs
+
+# Python caches
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.ipynb_checkpoints
+
+# Editor / OS
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# Backups + scratch
+**/*.bak
+**/*.tmp
+**/*.swp
+**/_backup_*
+**/Untitled-*.ipynb
+
+# Secrets
+**/.env
+**/.env.*
+!**/.env.example
+**/api_keys.conf
+
+# Docs not needed inside the image
+*.md
+!README.md
+!scanners/static_rule/README.md
+!scanners/llm_filter/README.md
+!scanners/alignment/README.md
+!scanners/behavioral/README.md

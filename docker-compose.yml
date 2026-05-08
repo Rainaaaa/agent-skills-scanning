@@ -1,0 +1,40 @@
+# Three named services — same image, different default args.
+#
+#   docker compose build
+#   docker compose run --rm prepare
+#   docker compose run --rm scan
+#   docker compose run --rm scan --only static_rule        # one stage at a time
+#   docker compose run --rm aggregate
+#
+# Override paths with env vars:
+#   AGENTSKILLS_INPUTS_HOST=/data/inputs         (default: ./inputs)
+#   AGENTSKILLS_OUTPUTS_HOST=/data/outputs       (default: ./outputs)
+#   AGENTSKILLS_MASB_HOST=/opt/MaliciousAgentSkillsBench    (default: ../MaliciousAgentSkillsBench)
+#   AGENTSKILLS_CLAUDE_DIR=/home/me/.claude       (default: $HOME/.claude)
+
+services:
+  base: &base
+    image: agent-skills-scanning:latest
+    build: .
+    volumes:
+      - ${AGENTSKILLS_INPUTS_HOST:-./inputs}:/app/inputs
+      - ${AGENTSKILLS_OUTPUTS_HOST:-./outputs}:/app/outputs
+      # Claude Code OAuth credentials (read-only). REQUIRED for llm_filter / alignment.
+      - ${AGENTSKILLS_CLAUDE_DIR:-${HOME}/.claude}:/root/.claude:ro
+      # MASB checkout for static_rule's upstream_path.
+      - ${AGENTSKILLS_MASB_HOST:-../MaliciousAgentSkillsBench}:/opt/masb:ro
+
+  # Build inputs/work_queue.csv from upstream skill_status.csv.
+  prepare:
+    <<: *base
+    command: ["pipeline/prepare_inputs.py", "--config", "/app/config.yaml"]
+
+  # Run the scanner pipeline. Override --only / --limit / --force as needed.
+  scan:
+    <<: *base
+    command: ["pipeline/run_pipeline.py", "--config", "/app/config.yaml"]
+
+  # Join per-scanner verdicts into one CSV.
+  aggregate:
+    <<: *base
+    command: ["pipeline/aggregate_results.py", "--config", "/app/config.yaml"]

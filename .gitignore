@@ -1,0 +1,50 @@
+# Crawled / scanned artifacts — large + reproducible. Keep local, never commit.
+inputs/
+outputs/
+**/log/
+**/logs/
+**/execution_logs/
+**/raw_responses/
+
+# Python caches / build
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ipynb_checkpoints/
+*.egg-info/
+build/
+dist/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Backups + scratch
+*.bak
+*.tmp
+*.swp
+*~
+_backup_*/
+Untitled-*.ipynb
+**/test.py
+
+# Secrets — NEVER commit
+.env
+.env.*
+!.env.example
+api_keys.conf
+
+# SLURM cluster outputs
+*.log
+*.err
+slurm-*.out
+
+# Local conda env / venv
+.venv/
+venv/
+
+# Allow placeholders so empty inputs/outputs trees survive a clone
+!inputs/.gitkeep
+!outputs/.gitkeep

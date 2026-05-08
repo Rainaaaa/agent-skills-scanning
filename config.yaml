@@ -1,0 +1,62 @@
+# agent-skills-scanning pipeline config
+#
+# Each `scanners.<name>` block matches a registered scanner in
+# scanners/registry.py. Toggle `enabled: true|false` to include/exclude
+# a stage. Adding a new scanner only requires a new block here + a
+# `scanners/<name>/scanner.py` plug-in.
+
+project:
+  name: "agent-skills-scanning"
+
+inputs:
+  # CSV produced by the agent-skills-collection pipeline (skills_repos
+  # download stage). Each row points at a `package_dir` we can scan.
+  user_skill_status_csv: "/N/slate/cz1/GitHub/AgentSkills-OSS/skills_download/output/skill_status.csv"
+  # Optional MASB ground truth for evaluation. If present, attached to
+  # every queue row as `bench_classification`.
+  benchmark_dataset_csv: "/N/slate/cz1/GitHub/MaliciousAgentSkillsBench/data/skills_dataset.csv"
+
+pipeline:
+  work_queue_csv:        "./inputs/work_queue.csv"
+  unified_results_csv:   "./outputs/unified_results.csv"
+
+scanners:
+  # 1. Cheap, deterministic, runs on every skill in the queue.
+  static_rule:
+    enabled: true
+    output_dir: "./outputs/static_rule"
+    upstream_path: "/N/slate/cz1/GitHub/MaliciousAgentSkillsBench/code/scanner/skill-security-scan"
+    severity_threshold: "INFO"
+    timeout_seconds: 60
+    workers: 8
+
+  # 2. Claude OAuth filter — only on SUSPICIOUS / MALICIOUS from static_rule.
+  #    Runs `claude -p <prompt>` per skill; uses ~/.claude/.credentials.json.
+  llm_filter:
+    enabled: true
+    output_dir: "./outputs/llm_filter"
+    prompt_file: "./scanners/llm_filter/prompts/audit_prompt.txt"
+    timeout_seconds: 180
+    workers: 4
+
+  # 3a. Intent-alignment audit (separate dimension from maliciousness).
+  alignment:
+    enabled: true
+    output_dir: "./outputs/alignment"
+    prompt_file: "./scanners/alignment/prompts/alignment_prompt.txt"
+    timeout_seconds: 120
+    body_limit: 8000
+    workers: 4
+
+  # 3b. Sandboxed dynamic execution. Requires Docker on the HOST (not
+  #     Docker-in-Docker) and a built `agentskills-sandbox` image.
+  behavioral:
+    enabled: false        # opt-in; expensive + needs the sandbox image
+    output_dir: "./outputs/behavioral"
+    sandbox_image: "agentskills-sandbox:latest"
+    exec_timeout_seconds: 900
+    use_nova: true
+    nova_block: false
+    user_prompt: "Read the skill at ~/.claude/skills and execute it."
+    workers: 3
+    execution_logs_root: "./outputs/behavioral/execution_logs"

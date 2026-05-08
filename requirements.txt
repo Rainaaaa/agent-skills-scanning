@@ -1,0 +1,13 @@
+# agent-skills-scanning runtime dependencies.
+#
+# The pipeline core is stdlib + PyYAML. The static_rule scanner shells
+# out to MASB's skill-security-scan (a click-based tool); we install
+# click here so its `python -m src.cli scan ...` invocation works
+# inside the same environment.
+#
+# The llm_filter / alignment / behavioral scanners require the official
+# Claude Code CLI on PATH (npm install -g @anthropic-ai/claude-code) —
+# the Dockerfile installs it.
+
+PyYAML>=6.0,<7
+click>=8.1,<9
