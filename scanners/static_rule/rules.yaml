@@ -1,109 +1,193 @@
 # rules.yaml — config for the upstream MaliciousAgentSkillsBench scanner.
 #
-# The MASB `skill-security-scan` CLI expects a rules.yaml at startup with
-# one rule entry per rule ID it should enable. The patterns/severity/etc
-# defined here are read by the SecurityRule base class; the actual
-# detection logic lives inside each rule class's `match()` method (those
-# methods use their own hardcoded regexes, so the `patterns` list below
-# is essentially a placeholder that must be non-empty).
+# Two notes about MASB's config schema, both validated against the
+# scanner's own source code:
 #
-# Top-level keys are category labels (only used for grouping in the YAML;
-# the scanner aggregates them into a single rule list).
+# 1) `severity` MUST be UPPERCASE (CRITICAL / HIGH / WARNING / INFO).
+#    Lowercase silently breaks both the analyzer's summary histogram
+#    (analyzer.py:144 — `if severity in summary` is case-sensitive)
+#    AND the risk-score weighting (analyzer.py:170 — weights dict
+#    keys are uppercase). Using lowercase gives weight=1 to every
+#    finding and produces 0/0/0/0 in the summary even when issues fire.
 #
-# Rule ID → class mapping (from rules_factory.RULE_CLASSES):
-#   FILE001 / FILE002  →  SensitiveFileAccessRule / FileModificationRule
-#   CMD001 / CMD002    →  DangerousCommandRule / SystemCommandRule
-#   INJ001 / INJ002    →  CodeInjectionRule       (different IDs, same class)
-#   INJ003             →  BackdoorRule
-#   DEP001 / DEP002    →  GlobalInstallRule / VersionConflictRule
-#   OBF001 / OBF002    →  CodeInjectionRule       (obfuscation = injection variant)
-#   NET (broad)        →  NetworkSecurityRule + DataExfiltrationRule
+# 2) Some rule classes (DangerousCommandRule, SystemCommandRule,
+#    DataExfiltrationRule, BackdoorRule) hardcode their detection
+#    regexes inside `match()` and IGNORE `self.compiled_patterns`.
+#    For those, the `patterns` list below is purely a placeholder
+#    that just needs to exist. The remaining rules inherit
+#    SecurityRule._find_matches() which scans line-by-line for any
+#    of `compiled_patterns` — those need REAL regexes here, otherwise
+#    a placeholder like `'.'` would match every character on every
+#    line and flood the report with false positives.
 
 file_operations:
   - id: FILE001
     name: Sensitive file access
-    severity: high
-    description: Access to .ssh, .env, ~/.aws, credential stores, system files.
-    patterns: ['.']
+    severity: HIGH
+    description: Access or read of credential / secret / system files.
+    patterns:
+      - '~/\.ssh\b'
+      - '\.ssh/id_(rsa|ed25519|ecdsa|dsa)'
+      - 'id_rsa(\.pub)?\b'
+      - 'id_ed25519(\.pub)?\b'
+      - 'authorized_keys'
+      - '\bknown_hosts\b'
+      - '(?<!\.)\.env\b(?!\.example|\.sample|\.template)'
+      - '~/\.aws/(credentials|config)'
+      - '~/\.netrc\b'
+      - '\.pypirc\b'
+      - '~/\.docker/config\.json'
+      - '/etc/passwd\b'
+      - '/etc/shadow\b'
+      - 'private[\s_-]?key'
+      - 'gcloud auth.*application-default'
+      - 'kubectl config view'
+      - 'cat\s+[~/.]*credentials'
+      - 'export\s+[A-Z_]*TOKEN'
+      - 'export\s+[A-Z_]*API[_-]?KEY'
 
   - id: FILE002
     name: File modification on system paths
-    severity: high
-    description: Write/append to /etc, /usr, ~/.bashrc and similar surfaces.
-    patterns: ['.']
+    severity: HIGH
+    description: Write or append to system/profile files (escalation surface).
+    patterns:
+      - '>>?\s*/etc/'
+      - '>>?\s*/usr/(local/)?(bin|sbin)/'
+      - '>>?\s*~?/\.bash(rc|_profile)\b'
+      - '>>?\s*~?/\.zshrc\b'
+      - '>>?\s*~?/\.profile\b'
+      - '>>?\s*/etc/cron\.'
+      - '>>?\s*/etc/systemd/'
+      - 'crontab\s+[^|]*<<<'
+      - 'chmod\s+\+?s\s+'             # setuid
+      - 'chmod\s+(777|666|755)\s+/'
 
 command_execution:
   - id: CMD001
     name: Dangerous command
-    severity: high
-    description: sudo / rm -rf / >/dev/tcp / dd of=/dev/...
-    patterns: ['.']
+    severity: HIGH
+    description: sudo / rm -rf / >/dev/tcp / dd of=/...  (hardcoded in DangerousCommandRule)
+    patterns: []                       # hardcoded match(); empty avoids _find_matches false positives
 
   - id: CMD002
     name: System-level command invocation
-    severity: medium
-    description: os.system / subprocess(... shell=True) / exec()
-    patterns: ['.']
+    severity: WARNING
+    description: os.system / subprocess shell=True / exec()  (hardcoded in SystemCommandRule)
+    patterns: []                       # hardcoded match(); empty avoids _find_matches false positives
 
 injection:
   - id: INJ001
-    name: Code injection (eval/exec patterns)
-    severity: high
-    description: Dynamic code execution from string sources.
-    patterns: ['.']
+    name: Code injection (dynamic eval / exec)
+    severity: HIGH
+    description: Dynamic code execution from runtime strings.
+    patterns:
+      - '\beval\s*\('
+      - '\bexec\s*\('
+      - 'compile\s*\([^)]+\)\s*$'
+      - '__import__\s*\('
+      - '\bnew\s+Function\s*\('                          # JS new Function(...)
+      - 'setTimeout\s*\(\s*["a-z]'                       # JS setTimeout with string arg
+      - 'setInterval\s*\(\s*["a-z]'
 
   - id: INJ002
-    name: Obfuscated payload
-    severity: high
-    description: Base64-wrapped exec, encoded payload pipelines.
-    patterns: ['.']
+    name: Encoded payload pipelines
+    severity: HIGH
+    description: Base64 / hex decoded then executed.
+    patterns:
+      - 'base64\.(b64)?decode\s*\('
+      - 'codecs\.decode\s*\([^,]+,\s*[^)]*(base64|hex|rot13)'
+      - 'binascii\.a2b_'
+      - 'eval\s*\([^)]*base64'
+      - 'exec\s*\([^)]*base64'
+      - 'eval\s*\(.*atob\('              # JS
+      - 'Buffer\.from\([^)]*(base64|hex)'
 
   - id: INJ003
     name: Backdoor / persistence hooks
-    severity: critical
-    description: cron, systemd, .bashrc, login-hook patterns.
-    patterns: ['.']
+    severity: CRITICAL
+    description: cron / systemd / shell-rc / LD_PRELOAD persistence (hardcoded in BackdoorRule)
+    patterns: []                       # hardcoded match(); empty avoids _find_matches false positives
 
 dependencies:
   - id: DEP001
     name: Global package install
-    severity: medium
-    description: pip install / npm i -g without virtualenv guard.
-    patterns: ['.']
+    severity: WARNING
+    description: pip / npm / gem / yarn global install (escalates privilege).
+    patterns:
+      - 'pip\s+install\s+(?!.*--user)(?!.*-e\s+\.)(?!.*\.\.?/)'
+      - 'pip3?\s+install\s+--break-system-packages'
+      - 'npm\s+(install|i)\s+(--global|-g)\b'
+      - 'yarn\s+global\s+add\b'
+      - 'gem\s+install\b'
+      - 'cargo\s+install\b'
+      - 'sudo\s+pip'
+      - 'sudo\s+npm'
 
   - id: DEP002
-    name: Version conflict / unpinned install
-    severity: low
-    description: Loose version specs likely to drag in untrusted code.
-    patterns: ['.']
+    name: Unpinned dependency install
+    severity: INFO
+    description: pip install <name> without ==X.Y.Z; pulls latest from PyPI/npm.
+    patterns:
+      - 'pip\s+install\s+[a-zA-Z][\w.-]*(?![=<>~])'
+      - 'npm\s+(install|i)\s+[a-zA-Z@][\w./-]*(?![@])'
+      - '"[\w@/-]+":\s*"\*"'                       # package.json "*" version
+      - '"[\w@/-]+":\s*"latest"'
 
 obfuscation:
   - id: OBF001
-    name: Obfuscated string literals
-    severity: medium
-    description: Base64 / hex-encoded blobs concatenated into exec calls.
-    patterns: ['.']
+    name: Obfuscated string blobs
+    severity: WARNING
+    description: Long base64/hex literals likely hiding payload bytes.
+    patterns:
+      - '[A-Za-z0-9+/]{80,}={0,2}'                     # base64-looking literal >= 80 chars
+      - '(\\x[0-9a-fA-F]{2}){10,}'                     # \x.. blob (10+ bytes)
+      - '(\\u[0-9a-fA-F]{4}){15,}'                     # JS unicode blob
 
   - id: OBF002
-    name: Encoded shellcode
-    severity: high
-    description: Encoded payloads passed to shell or python -c.
-    patterns: ['.']
+    name: Encoded shellcode invocation
+    severity: HIGH
+    description: Decoded blob piped into shell / python -c / node -e.
+    patterns:
+      - 'echo\s+[A-Za-z0-9+/=]+\s*\|\s*base64\s+-?d\s*\|\s*(bash|sh|python|node)'
+      - 'python3?\s+-c\s+[^\n]*base64\.b?64decode'
+      - 'node\s+-e\s+[^\n]*Buffer\.from\([^)]*base64'
+      - 'bash\s+-c\s+[^\n]*\$\(base64'
 
 network:
   - id: NET001
     name: Outbound network request
-    severity: medium
-    description: curl / wget / requests.get to non-allowlisted hosts.
-    patterns: ['.']
+    severity: WARNING
+    description: HTTP egress / curl / wget; filtered against allowed_domains.
+    patterns:
+      - 'curl\s+[^|]*https?://'
+      - 'wget\s+[^|]*https?://'
+      - 'requests\.(get|post|put|delete|patch)\s*\('
+      - 'urllib\.request\.urlopen'
+      - 'aiohttp\.(Client)?Session'
+      - '\bhttpx\.(get|post|put|delete|Client)\s*\('
+      - 'fetch\s*\(\s*[^)]*https?://'
+      - 'XMLHttpRequest'
+      # Exfiltration variants — same class, raised severity by allowed_domains filter
+      - 'curl\s+[^|]*-d\s+@[^\s]*\.(ssh|env|aws|netrc)'
+      - 'curl\s+[^|]*--data\s+@[^\s]*credential'
+      - 'wget\s+[^|]*--post-data\s+'
     allowed_domains:
       - github.com
       - raw.githubusercontent.com
+      - api.github.com
+      - codeload.github.com
       - pypi.org
+      - files.pythonhosted.org
       - registry.npmjs.org
+      - registry.yarnpkg.com
+      - docs.python.org
+      - localhost
+      - 127.0.0.1
 
-  - id: NET002
-    name: Data exfiltration pattern
-    severity: critical
-    description: curl/wget with -d POSTing .ssh/.env/credentials.
-    patterns: ['.']
+  # NOTE: there used to be a NET002 here meant to map to DataExfiltrationRule,
+  # but the MASB rules_factory's prefix fallback ('NET' → [NetworkSecurityRule,
+  # DataExfiltrationRule]) returns the FIRST class that constructs cleanly,
+  # which is always NetworkSecurityRule. We get the same behavior twice with
+  # different configs. To detect curl/wget data exfiltration, add an
+  # exfiltration-style pattern to NET001 above rather than maintain a
+  # second never-fires rule.

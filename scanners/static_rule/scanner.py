@@ -177,56 +177,66 @@ class StaticRuleScanner(Scanner):
     def _summarize_report(self, report: Dict[str, Any]) -> tuple[str, List[str], Dict[str, Any]]:
         """Reduce upstream JSON to (classification, reasons[], raw_summary).
 
-        The upstream JSON shape varies slightly across versions; we look at:
-          - report['summary']['total_critical' | 'total_warning' | 'total_info']
-          - report['files'][*]['issues'][*]['severity']  (fallback)
-        and emit the highest-priority class found.
+        MASB's report shape (verified from analyzer.py:152):
+
+            {
+              "risk_score": float,
+              "risk_level": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "SAFE",
+              "summary": {"CRITICAL": int, "HIGH": int, "WARNING": int, "INFO": int},
+              "issues": [{rule_id, severity, file, line, pattern, confidence}, ...],
+              "total_files": int,
+            }
+
+        We classify primarily from `risk_level` (MASB's own conclusion) and
+        cross-check by counting issues case-insensitively (MASB's `summary`
+        bucket is case-sensitive on uppercase keys but rule configs in some
+        installs use lowercase severities — counting the issues list is
+        more robust than trusting the bucketed summary).
         """
-        counts: Dict[str, int] = {"CRITICAL": 0, "WARNING": 0, "INFO": 0}
-        patterns: List[str] = []
-
+        risk_level = (report or {}).get("risk_level") or ""
+        risk_score = (report or {}).get("risk_score") or 0.0
         summary = (report or {}).get("summary") or {}
-        for k_total, sev in (
-            ("total_critical", "CRITICAL"),
-            ("total_warning",  "WARNING"),
-            ("total_info",     "INFO"),
-        ):
-            v = summary.get(k_total)
-            if isinstance(v, int):
-                counts[sev] = max(counts[sev], v)
+        issues = (report or {}).get("issues") or []
+        # Fallback for older MASB versions that nest issues under `files`:
+        if not issues:
+            for f in (report or {}).get("files", []) or []:
+                issues.extend(f.get("issues") or [])
 
-        for f in (report or {}).get("files", []) or []:
-            for issue in (f.get("issues") or []):
-                sev = (issue.get("severity") or "").upper()
-                if sev in counts:
-                    counts[sev] += 1
-                rule_id = issue.get("rule_id") or issue.get("rule")
-                if rule_id and rule_id not in patterns:
-                    patterns.append(rule_id)
+        counts: Dict[str, int] = {
+            "CRITICAL": 0, "HIGH": 0, "WARNING": 0, "MEDIUM": 0, "INFO": 0, "LOW": 0,
+        }
+        rule_ids: List[str] = []
+        for issue in issues:
+            sev = (issue.get("severity") or "").upper()
+            if sev in counts:
+                counts[sev] += 1
+            rid = issue.get("rule_id") or issue.get("rule")
+            if rid and rid not in rule_ids:
+                rule_ids.append(rid)
 
-        if counts["CRITICAL"] > 0:
+        # Map MASB's 5-level risk to our 3-level taxonomy.
+        rl = risk_level.upper()
+        if rl == "CRITICAL":
             classification = CLASS_MALICIOUS
-        elif counts["WARNING"] > 0:
+        elif rl in ("HIGH", "MEDIUM"):
             classification = CLASS_SUSPICIOUS
+        elif rl in ("LOW", "SAFE", ""):
+            classification = CLASS_SAFE
         else:
             classification = CLASS_SAFE
 
-        reasons: List[str] = []
-        if counts["CRITICAL"]:
-            reasons.append(f"{counts['CRITICAL']} CRITICAL")
-        if counts["WARNING"]:
-            reasons.append(f"{counts['WARNING']} WARNING")
-        if patterns:
-            reasons.append("patterns=" + ",".join(patterns[:6]))
-
-        # Confidence is a rough float useful for ranking, NOT a probability.
-        max_score = (counts["CRITICAL"] * 1.0
-                     + counts["WARNING"] * 0.4
-                     + counts["INFO"] * 0.05)
+        reasons: List[str] = [f"risk_level={risk_level} score={risk_score:.1f}"]
+        nonzero = [f"{k}={v}" for k, v in counts.items() if v]
+        if nonzero:
+            reasons.append("issues " + " ".join(nonzero))
+        if rule_ids:
+            reasons.append("rules=" + ",".join(rule_ids[:6]))
 
         return classification, reasons, {
+            "risk_level": risk_level,
+            "risk_score": risk_score,
             "counts": counts,
-            "patterns": patterns,
-            "max_severity_score": max_score,
+            "rule_ids": rule_ids,
             "upstream_summary": summary,
+            "total_issues": len(issues),
         }
