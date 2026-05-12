@@ -39,6 +39,11 @@ scanners:
     # we mount it at /opt/masb/code/scanner/skill-security-scan; locally,
     # set AGENTSKILLS_MASB_PATH to your clone.
     upstream_path: "${AGENTSKILLS_MASB_PATH:-/opt/masb/code/scanner/skill-security-scan}"
+    # rules.yaml that MASB reads at startup. The upstream repo doesn't
+    # ship this file, so we vendor a known-good copy under the scanner's
+    # own folder. Override with $AGENTSKILLS_STATIC_RULE_RULES to use a
+    # different ruleset.
+    rules_file: "${AGENTSKILLS_STATIC_RULE_RULES:-./scanners/static_rule/rules.yaml}"
     severity_threshold: "INFO"
     timeout_seconds: 60
     workers: 8

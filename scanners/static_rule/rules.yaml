@@ -1,0 +1,109 @@
+# rules.yaml — config for the upstream MaliciousAgentSkillsBench scanner.
+#
+# The MASB `skill-security-scan` CLI expects a rules.yaml at startup with
+# one rule entry per rule ID it should enable. The patterns/severity/etc
+# defined here are read by the SecurityRule base class; the actual
+# detection logic lives inside each rule class's `match()` method (those
+# methods use their own hardcoded regexes, so the `patterns` list below
+# is essentially a placeholder that must be non-empty).
+#
+# Top-level keys are category labels (only used for grouping in the YAML;
+# the scanner aggregates them into a single rule list).
+#
+# Rule ID → class mapping (from rules_factory.RULE_CLASSES):
+#   FILE001 / FILE002  →  SensitiveFileAccessRule / FileModificationRule
+#   CMD001 / CMD002    →  DangerousCommandRule / SystemCommandRule
+#   INJ001 / INJ002    →  CodeInjectionRule       (different IDs, same class)
+#   INJ003             →  BackdoorRule
+#   DEP001 / DEP002    →  GlobalInstallRule / VersionConflictRule
+#   OBF001 / OBF002    →  CodeInjectionRule       (obfuscation = injection variant)
+#   NET (broad)        →  NetworkSecurityRule + DataExfiltrationRule
+
+file_operations:
+  - id: FILE001
+    name: Sensitive file access
+    severity: high
+    description: Access to .ssh, .env, ~/.aws, credential stores, system files.
+    patterns: ['.']
+
+  - id: FILE002
+    name: File modification on system paths
+    severity: high
+    description: Write/append to /etc, /usr, ~/.bashrc and similar surfaces.
+    patterns: ['.']
+
+command_execution:
+  - id: CMD001
+    name: Dangerous command
+    severity: high
+    description: sudo / rm -rf / >/dev/tcp / dd of=/dev/...
+    patterns: ['.']
+
+  - id: CMD002
+    name: System-level command invocation
+    severity: medium
+    description: os.system / subprocess(... shell=True) / exec()
+    patterns: ['.']
+
+injection:
+  - id: INJ001
+    name: Code injection (eval/exec patterns)
+    severity: high
+    description: Dynamic code execution from string sources.
+    patterns: ['.']
+
+  - id: INJ002
+    name: Obfuscated payload
+    severity: high
+    description: Base64-wrapped exec, encoded payload pipelines.
+    patterns: ['.']
+
+  - id: INJ003
+    name: Backdoor / persistence hooks
+    severity: critical
+    description: cron, systemd, .bashrc, login-hook patterns.
+    patterns: ['.']
+
+dependencies:
+  - id: DEP001
+    name: Global package install
+    severity: medium
+    description: pip install / npm i -g without virtualenv guard.
+    patterns: ['.']
+
+  - id: DEP002
+    name: Version conflict / unpinned install
+    severity: low
+    description: Loose version specs likely to drag in untrusted code.
+    patterns: ['.']
+
+obfuscation:
+  - id: OBF001
+    name: Obfuscated string literals
+    severity: medium
+    description: Base64 / hex-encoded blobs concatenated into exec calls.
+    patterns: ['.']
+
+  - id: OBF002
+    name: Encoded shellcode
+    severity: high
+    description: Encoded payloads passed to shell or python -c.
+    patterns: ['.']
+
+network:
+  - id: NET001
+    name: Outbound network request
+    severity: medium
+    description: curl / wget / requests.get to non-allowlisted hosts.
+    patterns: ['.']
+    allowed_domains:
+      - github.com
+      - raw.githubusercontent.com
+      - pypi.org
+      - registry.npmjs.org
+
+  - id: NET002
+    name: Data exfiltration pattern
+    severity: critical
+    description: curl/wget with -d POSTing .ssh/.env/credentials.
+    patterns: ['.']

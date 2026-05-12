@@ -29,7 +29,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pipeline._shared import (
     CLASS_ERROR,
@@ -72,6 +72,20 @@ class StaticRuleScanner(Scanner):
         self._python_bin = self.scanner_config.get("python_bin", sys.executable)
         self._severity_threshold = self.scanner_config.get("severity_threshold", "INFO")
         self._timeout = int(self.scanner_config.get("timeout_seconds", 60))
+
+        # rules_file: optional override for the upstream `config/rules.yaml`.
+        # If set, passed to MASB as `--rules <abs-path>`. Defaults to the
+        # bundled `rules.yaml` next to this scanner module so the pipeline
+        # is self-contained — MASB upstream doesn't ship rules.yaml.
+        rules_file = self.scanner_config.get("rules_file")
+        if rules_file:
+            rules_path: Optional[Path] = Path(rules_file).expanduser().resolve()
+        else:
+            bundled = Path(__file__).resolve().parent / "rules.yaml"
+            rules_path = bundled if bundled.exists() else None
+        if rules_path is not None and not rules_path.exists():
+            raise RuntimeError(f"static_rule rules_file not found: {rules_path}")
+        self._rules_path = rules_path
 
     # ------------------------------------------------------------------
 
@@ -139,6 +153,8 @@ class StaticRuleScanner(Scanner):
             "--severity", self._severity_threshold,
             "--no-color",
         ]
+        if self._rules_path is not None:
+            cmd.extend(["--rules", str(self._rules_path)])
         try:
             p = subprocess.run(
                 cmd,

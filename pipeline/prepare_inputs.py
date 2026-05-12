@@ -132,8 +132,9 @@ def main() -> int:
     if not skill_status_csv or not skill_status_csv.exists():
         print(f"[ERROR] skill_status_csv not found: {skill_status_csv}", file=sys.stderr)
         return 1
-    benchmark_csv = Path(args.benchmark_csv or cfg.get("inputs.benchmark_dataset_csv", "") or ".")
-    if not benchmark_csv.exists():
+    bench_str = (args.benchmark_csv or cfg.get("inputs.benchmark_dataset_csv", "") or "").strip()
+    benchmark_csv = Path(bench_str) if bench_str else None
+    if benchmark_csv is not None and not benchmark_csv.exists():
         benchmark_csv = None
 
     out_csv = Path(args.out or cfg.get("pipeline.work_queue_csv", "./inputs/work_queue.csv"))
