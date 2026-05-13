@@ -183,31 +183,117 @@ def call_claude(
     *,
     timeout: int = 120,
     output_format: str = "text",
+    add_dirs: Optional[List[Path]] = None,
+    scanner: str = "unknown",
+    skill_id: str = "unknown",
 ) -> Tuple[bool, str]:
     """Invoke `claude -p <prompt>` and return (ok, response_text).
 
     Uses the OAuth credentials at `~/.claude/.credentials.json`. The CLI
-    handles refresh/rotation; we just call it. Captures stdout; on failure
-    `response_text` carries a short EXIT=… STDERR=… diagnostic.
+    handles refresh/rotation; we just call it.
 
-    `output_format` is passed through to the CLI's --output-format flag
-    ("text" | "stream-json" | "json"). Use "text" for free-form prompts
-    where you'll parse the JSON yourself with `parse_json_response()`.
+    Side effects:
+      - Writes one row to the quota ledger
+        (`pipeline.quota.ledger_path()`).
+      - Before the call, blocks via `wait_for_quota()` if cumulative
+        calls in the rolling 5h window are at/above the configured
+        budget (default 0.9 × 900 = 810 for Claude Max 20x).
+      - If Claude's response looks like a rate-limit signal, raises
+        `pipeline.quota.RateLimitError` so the caller can convert it
+        into an ERROR verdict; the next call will naturally wait at
+        the quota gate.
+
+    Args:
+      add_dirs:      extra directories Claude's tools (Read/Glob/Grep/
+                     Bash) are allowed to touch. Use this to grant
+                     access to a specific skill's package_dir — the CLI's
+                     default working-dir sandbox otherwise blocks reads
+                     under /media/volume/skills/skills/ etc.
+      scanner, skill_id: labels for the ledger row; harmless if omitted.
+      output_format: caller-facing return shape: "text" returns the
+                     `result` string; "json"/"stream-json" returns the
+                     raw stdout (same as the pre-quota behavior).
+                     Internally we always request JSON so we can read
+                     usage + stop_reason for ledger and rate-limit detection.
     """
+    from pipeline.quota import (
+        RateLimitError,
+        looks_rate_limited,
+        record_call,
+        wait_for_quota,
+    )
+
+    wait_for_quota()  # blocks if we're at/above 90% × MAX_CALLS_PER_5H
+
+    cmd = ["claude", "-p", prompt, "--output-format", "json"]
+    for d in (add_dirs or []):
+        cmd += ["--add-dir", str(d)]
+
+    t0 = time.time()
     try:
-        p = subprocess.run(
-            ["claude", "-p", prompt, "--output-format", output_format],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError:
+        record_call(scanner=scanner, skill_id=skill_id, ok=False,
+                    rate_limited=False, elapsed_sec=time.time() - t0)
         return False, "ERROR: 'claude' CLI not on PATH. Install Claude Code first."
     except subprocess.TimeoutExpired:
+        record_call(scanner=scanner, skill_id=skill_id, ok=False,
+                    rate_limited=False, elapsed_sec=time.time() - t0)
         return False, "TIMEOUT"
-    if p.returncode != 0:
+    elapsed = time.time() - t0
+
+    input_tokens = output_tokens = 0
+    is_error = (p.returncode != 0)
+    result_text = ""
+    rate_limited = False
+    raw_out = p.stdout or ""
+    try:
+        data = json.loads(raw_out)
+    except json.JSONDecodeError:
+        data = None
+
+    if isinstance(data, dict):
+        usage = data.get("usage") or {}
+        try:
+            input_tokens = int(usage.get("input_tokens") or 0)
+            output_tokens = int(usage.get("output_tokens") or 0)
+        except (TypeError, ValueError):
+            pass
+        is_error = bool(data.get("is_error", is_error))
+        result_text = (data.get("result") or "")
+        stop_reason = data.get("stop_reason") or ""
+        rate_limited = (
+            looks_rate_limited(stop_reason)
+            or (is_error and looks_rate_limited(result_text))
+        )
+    else:
+        result_text = raw_out or (p.stderr or "")
+        rate_limited = looks_rate_limited(result_text) or looks_rate_limited(p.stderr or "")
+
+    record_call(
+        scanner=scanner, skill_id=skill_id,
+        ok=(not is_error) and (not rate_limited),
+        rate_limited=rate_limited,
+        input_tokens=input_tokens, output_tokens=output_tokens,
+        elapsed_sec=elapsed,
+    )
+
+    if rate_limited:
+        raise RateLimitError(
+            f"[{scanner}/{skill_id}] claude rate-limit: {result_text[:240]}"
+        )
+
+    if output_format == "text":
+        if is_error or p.returncode != 0:
+            return False, (
+                f"EXIT={p.returncode} STDERR={(p.stderr or '')[:160]} "
+                f"RESULT={result_text[:160]}"
+            )
+        return True, result_text.strip()
+    # output_format == "json" / "stream-json": return raw stdout
+    if is_error or p.returncode != 0:
         return False, f"EXIT={p.returncode} STDERR={(p.stderr or '')[:300]}"
-    return True, (p.stdout or "").strip()
+    return True, raw_out.strip()
 
 
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```\s*$", re.MULTILINE)
