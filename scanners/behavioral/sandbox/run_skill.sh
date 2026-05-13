@@ -56,8 +56,12 @@ echo "Log Dir: $TEST_DIR"
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
 
-# Generate unique container name
-CONTAINER_NAME="skill-exec-${SKILL_NAME}-${REPO_ID}-$$"
+# Generate unique container name. Docker requires [a-zA-Z0-9_.-]; both
+# SKILL_NAME and REPO_ID can carry slashes (e.g. REPO_ID="owner/repo"),
+# so flatten them.
+SAFE_SKILL_NAME="${SKILL_NAME//\//-}"
+SAFE_REPO_ID="${REPO_ID//\//-}"
+CONTAINER_NAME="skill-exec-${SAFE_SKILL_NAME}-${SAFE_REPO_ID}-$$"
 
 # Set mount arguments based on log mode
 if [ "$IN_PLACE_LOG" = "true" ]; then
