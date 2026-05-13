@@ -46,6 +46,7 @@ from pipeline._shared import (
     assert_claude_oauth_ready,
     iter_jsonl,
 )
+from pipeline.quota import record_call as _record_quota, wait_for_quota as _wait_for_quota
 from scanners.base import Scanner
 
 
@@ -117,6 +118,12 @@ class BehavioralScanner(Scanner):
             "false",  # IN_PLACE_LOG
         ]
 
+        # Each behavioral run launches `claude --dangerously-skip-permissions`
+        # inside the sandbox container — same OAuth subscription, same
+        # rolling-5h cap as the host-side llm_filter/alignment calls.
+        # Block here so we don't blow past 90% × max_calls / 5h.
+        _wait_for_quota()
+
         t0 = time.time()
         try:
             cp = subprocess.run(
@@ -128,6 +135,9 @@ class BehavioralScanner(Scanner):
                 timeout=self._exec_timeout + 60,
             )
         except subprocess.TimeoutExpired:
+            _record_quota(scanner=self.name, skill_id=skill.skill_id,
+                          ok=False, rate_limited=False,
+                          elapsed_sec=time.time() - t0)
             return ScannerVerdict(
                 scanner=self.name,
                 skill_id=skill.skill_id,
@@ -136,8 +146,43 @@ class BehavioralScanner(Scanner):
                 elapsed_sec=time.time() - t0,
             )
         elapsed = round(time.time() - t0, 2)
+        # Each successful (or even failed-after-claude-call) sandbox run
+        # consumed one Claude message. Best-effort detection: if the
+        # claude session was reached, count one. (run_skill.sh exits 125
+        # before claude on docker errors — we detect that and skip.)
+        sandbox_reached_claude = (cp.returncode != 125) and ("docker: Error" not in (cp.stdout or ""))
+        if sandbox_reached_claude:
+            # Surface obvious rate-limit substrings from the in-sandbox
+            # claude output so the gate can also wait on behavioral 429s.
+            from pipeline.quota import looks_rate_limited as _looks_rl
+            rl = _looks_rl((cp.stdout or "")[:8000])
+            _record_quota(scanner=self.name, skill_id=skill.skill_id,
+                          ok=(cp.returncode == 0) and not rl,
+                          rate_limited=rl, elapsed_sec=elapsed)
 
         log_dir = self._exec_logs_root / risk_level / repo_id / skill.skill_id
+        # DEBUG: persist the raw subprocess output so docker daemon errors
+        # show up somewhere readable, not just truncated in verdict.reasons.
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "subprocess_stdout.log").write_text(cp.stdout or "")
+        except Exception:
+            pass
+        # If the in-sandbox claude was rate-limited the skill never actually
+        # ran — NOVA + smart_monitor will see no indicators and the default
+        # mapping would classify as SAFE, which is a false negative. Force
+        # ERROR so a retry pass picks it up.
+        from pipeline.quota import looks_rate_limited as _looks_rl
+        if _looks_rl((cp.stdout or "")[:8000]):
+            return ScannerVerdict(
+                scanner=self.name,
+                skill_id=skill.skill_id,
+                classification=CLASS_ERROR,
+                reasons=["rate_limited inside sandbox: skill not executed"],
+                raw={"exit_code": cp.returncode, "log_dir": str(log_dir),
+                     "indicators": [], "rate_limited": True},
+                elapsed_sec=elapsed,
+            )
         return self._verdict_from_log_dir(skill, log_dir, cp, elapsed)
 
     # ------------------------------------------------------------------
