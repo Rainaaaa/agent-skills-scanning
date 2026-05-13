@@ -53,6 +53,7 @@ from pipeline._shared import (
     call_claude,
     parse_json_response,
 )
+from pipeline.quota import RateLimitError
 from scanners.base import Scanner
 
 
@@ -124,7 +125,22 @@ class AlignmentScanner(Scanner):
         )
 
         t0 = time.time()
-        ok, response = call_claude(prompt, timeout=self._timeout)
+        try:
+            ok, response = call_claude(
+                prompt,
+                timeout=self._timeout,
+                add_dirs=[skill.package_dir],
+                scanner=self.name,
+                skill_id=skill.skill_id,
+            )
+        except RateLimitError as e:
+            return ScannerVerdict(
+                scanner=self.name,
+                skill_id=skill.skill_id,
+                classification=CLASS_ERROR,
+                reasons=[f"rate_limited: {str(e)[:200]}"],
+                elapsed_sec=round(time.time() - t0, 2),
+            )
         elapsed = round(time.time() - t0, 2)
 
         try:
