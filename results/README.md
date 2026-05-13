@@ -28,12 +28,71 @@ files are kept for audit / retry tracing.
 | `static_rule` (BigRed import) | 1,136 (queue) | 100 % | All flagged upstream |
 | `llm_filter` | 1,136 | **99.8 %** | 803 SAFE, 298 SUSPICIOUS, 33 MALICIOUS, 2 ERROR |
 | `alignment` | 331 | **100 %** | 137 ALIGNED, 194 MISALIGNED |
-| `behavioral` | 331 | **99.7 %** | 330 SAFE, 1 ERROR |
-| **`overall_class`** | 1,136 | — | 724 SUSPICIOUS, 412 MALICIOUS |
+| `behavioral` (revised, see below) | 331 | — | **34 SAFE, 17 MALICIOUS, 280 ERROR** |
+| **`overall_class`** | 1,136 | — | **716 SUSPICIOUS, 420 MALICIOUS** |
 
 The `alignment_class` axis is **separate** from the maliciousness
 axis by design — see the top-level README's "Why pluggable" /
 "What goes into the unified CSV" sections.
+
+## Behavioral re-labeling (important caveat)
+
+The raw `behavioral_class` produced by NOVA hooks was misleading on
+this dataset: 330 of 331 verdicts came back `SAFE`, but most of those
+weren't real "skill ran cleanly" results. The model under test
+(Claude) is also the executor inside the sandbox, and Claude's
+safety training causes it to refuse most malicious skills before any
+syscall happens — NOVA sees nothing, the verdict ladder maps that to
+SAFE, false negative. Doc-only skills (SKILL.md describes an attack
+but ships no auto-running script) and rate-limit rejections amplify
+the effect.
+
+To get an honest signal we re-read every `claude_output.txt` and
+classified the actual outcome:
+
+| `claude_outcome` (from `behavioral_revised.jsonl`) | Count | What it means | Revised `behavioral_class` |
+| --- | --- | --- | --- |
+| `NOT_RUN` | 257 | Claude was rate-limited (`"You've hit your limit · resets…"`) and never executed the skill. The original "SAFE" verdict was meaningless. | **`ERROR`** |
+| `EXECUTED` | 35 | Claude actually drove the skill end-to-end. NOVA's no-indicators → SAFE is meaningful here. | **`SAFE`** (kept) |
+| `BLOCKED_ENV` | 23 | Claude tried but couldn't proceed (missing args, binary not built, no target). Inconclusive — not a safety signal. | **`ERROR`** |
+| `REFUSED` | 18 | Claude explicitly declined on safety grounds (*"I'm not going to run this without authorization context"*, etc.). **Strong implicit MALICIOUS signal** — Claude itself flagged the skill as dangerous. | **`MALICIOUS`** |
+
+`results/behavioral_revised.jsonl` carries one row per skill with
+`{skill_id, claude_outcome, evidence, orig_behavioral_class}` for
+audit. `results/behavioral_verdicts.jsonl` in this directory is the
+**post-relabel** version; the pre-relabel original is preserved on
+the scanning host at
+`outputs/behavioral/verdicts.jsonl.before-revised-*`.
+
+`overall_class` is the worst of `static_rule + llm_filter +
+behavioral`, where `ERROR` does **not** propagate (ERROR rows fall
+back to the non-ERROR scanners). Net effect of the relabel: **+8
+skills moved to `overall_class = MALICIOUS`** (716 SUSPICIOUS / 420
+MALICIOUS vs the pre-relabel 724/412). The other 9 of the 17 newly-
+MALICIOUS behavioral rows were already MALICIOUS via static or
+llm_filter, so their `overall_class` didn't change.
+
+### Reproducing the relabel
+
+Two scripts on the scanning host (not in the repo because they're
+host-paths-baked-in):
+
+```bash
+# 1. Read every execution_logs/.../claude_output.txt and classify
+#    NOT_RUN / EXECUTED / BLOCKED_ENV / REFUSED. Writes
+#    outputs/behavioral_revised.jsonl with one row per skill.
+python /media/volume/skills/scanning_outputs/relabel_behavioral.py
+
+# 2. Apply the new labels to outputs/behavioral/verdicts.jsonl
+#    (with a *.before-revised-* backup) and re-aggregate.
+python /media/volume/skills/scanning_outputs/apply_revised_behavioral.py
+python -m pipeline.aggregate_results --config config.yaml
+```
+
+If the orchestrator ever re-runs `behavioral`, the patched
+`looks_rate_limited` (added in PR #2) will now correctly mark
+rate-limit rejections as ERROR up-front, so future passes won't need
+this offline relabeling step.
 
 ## What's NOT here (kept on the scanning host)
 
