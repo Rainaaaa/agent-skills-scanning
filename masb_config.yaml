@@ -1,0 +1,55 @@
+# MASB alignment-only config — Jetstream, 2026-05-14.
+#
+# Scans the 311 MASB malicious+suspicious skills we successfully
+# downloaded/extracted under /media/volume/skills/AgentSkills-OSS/agent-skills-scanning/work/masb_skills/.
+# Only the `alignment` scanner runs; we deliberately skip behavioral
+# (the in-sandbox claude refuses too much on this kind of skill, as
+# we learned with the earlier 1,136 run) and skip llm_filter
+# (MASB already provides ground-truth maliciousness labels, no need
+# for an LLM filter on top).
+
+project:
+  name: "agent-skills-scanning-masb"
+
+inputs:
+  user_skill_status_csv: "/media/volume/skills/AgentSkills-OSS/agent-skills-scanning/work/masb_skills/skill_status.csv"
+  # MASB ground truth so `bench_classification` is populated in the
+  # unified CSV. prepare_inputs joins on (repo.lower(), skill_name.lower()).
+  benchmark_dataset_csv: "/media/volume/skills/MaliciousAgentSkillsBench/data/skills_dataset.csv"
+
+pipeline:
+  work_queue_csv:      "/media/volume/skills/AgentSkills-OSS/agent-skills-scanning/work/masb_alignment_outputs/inputs/work_queue.csv"
+  unified_results_csv: "/media/volume/skills/AgentSkills-OSS/agent-skills-scanning/work/masb_alignment_outputs/outputs/unified_results.csv"
+
+scanners:
+  static_rule:
+    enabled: true
+    output_dir: "/media/volume/skills/AgentSkills-OSS/agent-skills-scanning/work/masb_alignment_outputs/outputs/static_rule"
+    upstream_path: "/media/volume/skills/MaliciousAgentSkillsBench/code/scanner/skill-security-scan"
+    rules_file: "./scanners/static_rule/rules.yaml"
+    severity_threshold: "INFO"
+    timeout_seconds: 60
+    workers: 8
+  llm_filter:
+    enabled: true
+    output_dir: "/media/volume/skills/AgentSkills-OSS/agent-skills-scanning/work/masb_alignment_outputs/outputs/llm_filter"
+    prompt_file: "./scanners/llm_filter/prompts/audit_prompt.txt"
+    timeout_seconds: 180
+    workers: 4
+  alignment:
+    enabled: true
+    output_dir: "/media/volume/skills/AgentSkills-OSS/agent-skills-scanning/work/masb_alignment_outputs/outputs/alignment"
+    prompt_file: "./scanners/alignment/prompts/alignment_prompt.txt"
+    timeout_seconds: 120
+    body_limit: 8000
+    workers: 4
+  behavioral:
+    enabled: true
+    output_dir: "/media/volume/skills/AgentSkills-OSS/agent-skills-scanning/work/masb_alignment_outputs/outputs/behavioral"
+    sandbox_image: "agentskills-sandbox:latest"
+    exec_timeout_seconds: 900
+    use_nova: true
+    nova_block: false
+    user_prompt: "Read the skill at ~/.claude/skills and execute it."
+    workers: 3
+    execution_logs_root: "/media/volume/skills/AgentSkills-OSS/agent-skills-scanning/work/masb_alignment_outputs/outputs/behavioral/execution_logs"

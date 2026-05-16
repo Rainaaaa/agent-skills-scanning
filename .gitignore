@@ -52,3 +52,7 @@ venv/
 # Allow placeholders so empty inputs/outputs trees survive a clone
 !inputs/.gitkeep
 !outputs/.gitkeep
+
+# Local working artifacts (skills_sft_challenge, scanning outputs,
+# masb_skills extracts, etc.). Per-host, large, reproducible.
+work/

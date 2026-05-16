@@ -18,7 +18,7 @@ Env vars (overridable from config later):
   CLAUDE_MAX_CALLS_PER_5H   default 900 (Max 20x). Set 45 for Pro,
                              225 for Max 5x.
   CLAUDE_QUOTA_THRESHOLD    default 0.9 (stop at 90% of cap).
-  CLAUDE_QUOTA_LEDGER       default /media/volume/skills/scanning_outputs/quota_ledger.jsonl
+  CLAUDE_QUOTA_LEDGER       default /media/volume/skills/AgentSkills-OSS/agent-skills-scanning/work/scanning_outputs/quota_ledger.jsonl
   CLAUDE_QUOTA_CHECK_SEC    poll interval when paused (default 60).
 """
 
@@ -47,7 +47,7 @@ class RateLimitError(Exception):
 def ledger_path() -> Path:
     return Path(os.environ.get(
         "CLAUDE_QUOTA_LEDGER",
-        "/media/volume/skills/scanning_outputs/quota_ledger.jsonl",
+        "/media/volume/skills/AgentSkills-OSS/agent-skills-scanning/work/scanning_outputs/quota_ledger.jsonl",
     ))
 
 
